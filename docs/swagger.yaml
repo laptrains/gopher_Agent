@@ -1,0 +1,551 @@
+basePath: /api/v1
+definitions:
+  GopherAI_common_tts.TTSRequest:
+    properties:
+      enable_subtitle:
+        type: integer
+      format:
+        type: string
+      lang:
+        type: string
+      pitch:
+        type: integer
+      speed:
+        type: integer
+      text:
+        type: string
+      voice:
+        type: integer
+      volume:
+        type: integer
+    type: object
+  code.Code:
+    enum:
+    - 1000
+    - 2001
+    - 2002
+    - 2003
+    - 2004
+    - 2005
+    - 2006
+    - 2007
+    - 2008
+    - 2009
+    - 2010
+    - 3001
+    - 4001
+    - 5001
+    - 5002
+    - 5003
+    - 6001
+    format: int64
+    type: integer
+    x-enum-varnames:
+    - CodeSuccess
+    - CodeInvalidParams
+    - CodeUserExist
+    - CodeUserNotExist
+    - CodeInvalidPassword
+    - CodeNotMatchPassword
+    - CodeInvalidToken
+    - CodeNotLogin
+    - CodeInvalidCaptcha
+    - CodeRecordNotFound
+    - CodeIllegalPassword
+    - CodeForbidden
+    - CodeServerBusy
+    - AIModelNotFind
+    - AIModelCannotOpen
+    - AIModelFail
+    - TTSFail
+  file.UploadFileResponse:
+    properties:
+      file_path:
+        type: string
+      status_code:
+        $ref: '#/definitions/code.Code'
+      status_msg:
+        type: string
+    type: object
+  image.RecognizeImageResponse:
+    properties:
+      class_name:
+        description: AI回答
+        type: string
+      status_code:
+        $ref: '#/definitions/code.Code'
+      status_msg:
+        type: string
+    type: object
+  model.History:
+    properties:
+      content:
+        type: string
+      is_user:
+        type: boolean
+    type: object
+  model.SessionInfo:
+    properties:
+      name:
+        type: string
+      sessionId:
+        type: string
+    type: object
+  session.ChatHistoryRequest:
+    properties:
+      sessionId:
+        description: 当前会话ID
+        type: string
+    required:
+    - sessionId
+    type: object
+  session.ChatHistoryResponse:
+    properties:
+      history:
+        items:
+          $ref: '#/definitions/model.History'
+        type: array
+      status_code:
+        $ref: '#/definitions/code.Code'
+      status_msg:
+        type: string
+    type: object
+  session.ChatSendRequest:
+    properties:
+      modelType:
+        description: 模型类型;
+        type: string
+      question:
+        description: 用户问题;
+        type: string
+      sessionId:
+        description: 当前会话ID
+        type: string
+    required:
+    - modelType
+    - question
+    - sessionId
+    type: object
+  session.ChatSendResponse:
+    properties:
+      Information:
+        description: AI回答
+        type: string
+      status_code:
+        $ref: '#/definitions/code.Code'
+      status_msg:
+        type: string
+    type: object
+  session.CreateSessionAndSendMessageRequest:
+    properties:
+      modelType:
+        description: 模型类型;
+        type: string
+      question:
+        description: 用户问题;
+        type: string
+    required:
+    - modelType
+    - question
+    type: object
+  session.CreateSessionAndSendMessageResponse:
+    properties:
+      Information:
+        description: AI回答
+        type: string
+      sessionId:
+        description: 当前会话ID
+        type: string
+      status_code:
+        $ref: '#/definitions/code.Code'
+      status_msg:
+        type: string
+    type: object
+  session.GetUserSessionsResponse:
+    properties:
+      sessions:
+        items:
+          $ref: '#/definitions/model.SessionInfo'
+        type: array
+      status_code:
+        $ref: '#/definitions/code.Code'
+      status_msg:
+        type: string
+    type: object
+  tts.QueryTTSResponse:
+    properties:
+      status_code:
+        $ref: '#/definitions/code.Code'
+      status_msg:
+        type: string
+      task_id:
+        type: string
+      task_result:
+        type: string
+      task_status:
+        type: string
+    type: object
+  tts.TTSResponse:
+    properties:
+      status_code:
+        $ref: '#/definitions/code.Code'
+      status_msg:
+        type: string
+      task_id:
+        type: string
+    type: object
+  user.CaptchaRequest:
+    properties:
+      email:
+        type: string
+    required:
+    - email
+    type: object
+  user.CaptchaResponse:
+    properties:
+      status_code:
+        $ref: '#/definitions/code.Code'
+      status_msg:
+        type: string
+    type: object
+  user.LoginRequest:
+    properties:
+      password:
+        type: string
+      username:
+        type: string
+    type: object
+  user.LoginResponse:
+    properties:
+      status_code:
+        $ref: '#/definitions/code.Code'
+      status_msg:
+        type: string
+      token:
+        type: string
+    type: object
+  user.RegisterRequest:
+    properties:
+      captcha:
+        type: string
+      email:
+        type: string
+      password:
+        type: string
+    required:
+    - email
+    type: object
+  user.RegisterResponse:
+    properties:
+      status_code:
+        $ref: '#/definitions/code.Code'
+      status_msg:
+        type: string
+      token:
+        type: string
+    type: object
+host: localhost:9090
+info:
+  contact: {}
+  description: GopherAI AI 聊天后端接口文档
+  title: GopherAI API
+  version: "1.0"
+paths:
+  /AI/chat/history:
+    post:
+      consumes:
+      - application/json
+      description: 获取指定会话的历史消息列表
+      parameters:
+      - description: 会话ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/session.ChatHistoryRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/session.ChatHistoryResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: 获取会话历史
+      tags:
+      - 会话
+  /AI/chat/send:
+    post:
+      consumes:
+      - application/json
+      description: 在指定会话中发送用户问题，返回 AI 回答
+      parameters:
+      - description: 用户问题、模型类型与会话ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/session.ChatSendRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/session.ChatSendResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: 向已有会话发送消息
+      tags:
+      - 会话
+  /AI/chat/send-new-session:
+    post:
+      consumes:
+      - application/json
+      description: 创建新会话并发送用户问题，返回 AI 回答与新的会话ID
+      parameters:
+      - description: 用户问题与模型类型
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/session.CreateSessionAndSendMessageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/session.CreateSessionAndSendMessageResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: 创建新会话并发送消息
+      tags:
+      - 会话
+  /AI/chat/send-stream:
+    post:
+      consumes:
+      - application/json
+      description: 在指定会话中发送用户问题，以 SSE 流式返回 AI 回答
+      parameters:
+      - description: 用户问题、模型类型与会话ID
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/session.ChatSendRequest'
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: SSE 数据流
+          schema:
+            type: string
+      security:
+      - ApiKeyAuth: []
+      summary: 向已有会话流式发送消息
+      tags:
+      - 会话
+  /AI/chat/send-stream-new-session:
+    post:
+      consumes:
+      - application/json
+      description: 创建新会话并以 SSE 流式返回 AI 回答，数据流先返回 sessionId 再返回回答内容
+      parameters:
+      - description: 用户问题与模型类型
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/session.CreateSessionAndSendMessageRequest'
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: SSE 数据流
+          schema:
+            type: string
+      security:
+      - ApiKeyAuth: []
+      summary: 创建新会话并流式发送消息
+      tags:
+      - 会话
+  /AI/chat/sessions:
+    get:
+      description: 返回当前登录用户的所有会话
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/session.GetUserSessionsResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: 获取用户会话列表
+      tags:
+      - 会话
+  /AI/chat/tts:
+    post:
+      consumes:
+      - application/json
+      description: 提交文本创建语音合成任务，返回任务ID供轮询查询
+      parameters:
+      - description: 待合成文本
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/GopherAI_common_tts.TTSRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/tts.TTSResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: 创建TTS语音合成任务
+      tags:
+      - 语音合成
+  /AI/chat/tts/query:
+    get:
+      description: 通过任务ID查询语音合成状态与结果URL
+      parameters:
+      - description: 任务ID
+        in: query
+        name: task_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/tts.QueryTTSResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: 查询TTS任务结果
+      tags:
+      - 语音合成
+  /file/upload:
+    post:
+      consumes:
+      - multipart/form-data
+      description: 上传文本文件用于RAG检索（每个用户仅保留一个文件，上传新文件会替换旧文件）
+      parameters:
+      - description: 文本文件
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/file.UploadFileResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: 上传RAG知识库文件
+      tags:
+      - 文件
+  /image/recognize:
+    post:
+      consumes:
+      - multipart/form-data
+      description: 上传一张图片，返回识别出的类别名称
+      parameters:
+      - description: 待识别的图片文件
+        in: formData
+        name: image
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/image.RecognizeImageResponse'
+      security:
+      - ApiKeyAuth: []
+      summary: 图像识别
+      tags:
+      - 图像
+  /user/captcha:
+    post:
+      consumes:
+      - application/json
+      description: 向指定邮箱发送注册验证码
+      parameters:
+      - description: 邮箱地址
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/user.CaptchaRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.CaptchaResponse'
+      summary: 发送邮箱验证码
+      tags:
+      - 用户
+  /user/login:
+    post:
+      consumes:
+      - application/json
+      description: 使用账号密码登录，成功后返回 JWT Token
+      parameters:
+      - description: 登录请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/user.LoginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.LoginResponse'
+      summary: 用户登录
+      tags:
+      - 用户
+  /user/register:
+    post:
+      consumes:
+      - application/json
+      description: 使用邮箱+验证码+密码注册，注册成功直接返回 JWT Token
+      parameters:
+      - description: 注册请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/user.RegisterRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/user.RegisterResponse'
+      summary: 用户注册
+      tags:
+      - 用户
+securityDefinitions:
+  ApiKeyAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

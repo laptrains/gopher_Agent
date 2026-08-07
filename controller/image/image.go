@@ -17,6 +17,16 @@ type (
 	}
 )
 
+// RecognizeImage 图像识别
+// @Summary 图像识别
+// @Description 上传一张图片，返回识别出的类别名称
+// @Tags 图像
+// @Security ApiKeyAuth
+// @Accept multipart/form-data
+// @Produce json
+// @Param image formData file true "待识别的图片文件"
+// @Success 200 {object} image.RecognizeImageResponse
+// @Router /image/recognize [post]
 func RecognizeImage(c *gin.Context) {
 	res := new(RecognizeImageResponse)
 	file, err := c.FormFile("image")

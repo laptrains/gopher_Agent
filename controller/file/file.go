@@ -17,6 +17,16 @@ type (
 	}
 )
 
+// UploadRagFile 上传RAG知识库文件
+// @Summary 上传RAG知识库文件
+// @Description 上传文本文件用于RAG检索（每个用户仅保留一个文件，上传新文件会替换旧文件）
+// @Tags 文件
+// @Security ApiKeyAuth
+// @Accept multipart/form-data
+// @Produce json
+// @Param file formData file true "文本文件"
+// @Success 200 {object} file.UploadFileResponse
+// @Router /file/upload [post]
 func UploadRagFile(c *gin.Context) {
 	res := new(UploadFileResponse)
 	uploadedFile, err := c.FormFile("file")

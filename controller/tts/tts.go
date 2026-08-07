@@ -36,6 +36,16 @@ func NewTTSServices() *TTSServices {
 	}
 }
 
+// CreateTTSTask 创建TTS语音合成任务
+// @Summary 创建TTS语音合成任务
+// @Description 提交文本创建语音合成任务，返回任务ID供轮询查询
+// @Tags 语音合成
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body tts.TTSRequest true "待合成文本"
+// @Success 200 {object} tts.TTSResponse
+// @Router /AI/chat/tts [post]
 func CreateTTSTask(c *gin.Context) {
 	tts := NewTTSServices()
 	req := new(TTSRequest)
@@ -63,6 +73,15 @@ func CreateTTSTask(c *gin.Context) {
 
 }
 
+// QueryTTSTask 查询TTS任务结果
+// @Summary 查询TTS任务结果
+// @Description 通过任务ID查询语音合成状态与结果URL
+// @Tags 语音合成
+// @Security ApiKeyAuth
+// @Produce json
+// @Param task_id query string true "任务ID"
+// @Success 200 {object} tts.QueryTTSResponse
+// @Router /AI/chat/tts/query [get]
 func QueryTTSTask(c *gin.Context) {
 	tts := NewTTSServices()
 	res := new(QueryTTSResponse)

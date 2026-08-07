@@ -42,6 +42,15 @@ type (
 	}
 )
 
+// Login 用户登录
+// @Summary 用户登录
+// @Description 使用账号密码登录，成功后返回 JWT Token
+// @Tags 用户
+// @Accept json
+// @Produce json
+// @Param request body user.LoginRequest true "登录请求"
+// @Success 200 {object} user.LoginResponse
+// @Router /user/login [post]
 func Login(c *gin.Context) {
 
 	req := new(LoginRequest)
@@ -63,6 +72,15 @@ func Login(c *gin.Context) {
 
 }
 
+// Register 用户注册
+// @Summary 用户注册
+// @Description 使用邮箱+验证码+密码注册，注册成功直接返回 JWT Token
+// @Tags 用户
+// @Accept json
+// @Produce json
+// @Param request body user.RegisterRequest true "注册请求"
+// @Success 200 {object} user.RegisterResponse
+// @Router /user/register [post]
 func Register(c *gin.Context) {
 
 	req := new(RegisterRequest)
@@ -83,6 +101,15 @@ func Register(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
+// HandleCaptcha 发送邮箱验证码
+// @Summary 发送邮箱验证码
+// @Description 向指定邮箱发送注册验证码
+// @Tags 用户
+// @Accept json
+// @Produce json
+// @Param request body user.CaptchaRequest true "邮箱地址"
+// @Success 200 {object} user.CaptchaResponse
+// @Router /user/captcha [post]
 func HandleCaptcha(c *gin.Context) {
 	req := new(CaptchaRequest)
 	res := new(CaptchaResponse)

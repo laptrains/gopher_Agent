@@ -10,6 +10,8 @@ import (
 	"GopherAI/router"
 	"fmt"
 	"log"
+
+	_ "GopherAI/docs"
 )
 
 func StartServer(addr string, port int) error {
@@ -49,6 +51,14 @@ func readDataFromDB() error {
 	return nil
 }
 
+// @title GopherAI API
+// @version 1.0
+// @description GopherAI AI 聊天后端接口文档
+// @host localhost:9090
+// @BasePath /api/v1
+// @securityDefinitions.apikey ApiKeyAuth
+// @in header
+// @name Authorization
 func main() {
 	conf := config.GetConfig()
 	host := conf.MainConfig.Host

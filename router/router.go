@@ -3,12 +3,19 @@ package router
 import (
 	"GopherAI/middleware/jwt"
 
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
+
 	"github.com/gin-gonic/gin"
 )
 
 func InitRouter() *gin.Engine {
 
 	r := gin.Default()
+
+	// Swagger 接口文档
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
 	enterRouter := r.Group("/api/v1")
 	{
 		RegisterUserRouter(enterRouter.Group("/user"))

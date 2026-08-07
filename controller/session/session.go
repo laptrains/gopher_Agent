@@ -47,6 +47,14 @@ type (
 	}
 )
 
+// GetUserSessionsByUserName 获取当前用户的会话列表
+// @Summary 获取用户会话列表
+// @Description 返回当前登录用户的所有会话
+// @Tags 会话
+// @Security ApiKeyAuth
+// @Produce json
+// @Success 200 {object} session.GetUserSessionsResponse
+// @Router /AI/chat/sessions [get]
 func GetUserSessionsByUserName(c *gin.Context) {
 	res := new(GetUserSessionsResponse)
 	userName := c.GetString("userName") // From JWT middleware
@@ -62,6 +70,16 @@ func GetUserSessionsByUserName(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
+// CreateSessionAndSendMessage 创建新会话并发送消息（非流式）
+// @Summary 创建新会话并发送消息
+// @Description 创建新会话并发送用户问题，返回 AI 回答与新的会话ID
+// @Tags 会话
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body session.CreateSessionAndSendMessageRequest true "用户问题与模型类型"
+// @Success 200 {object} session.CreateSessionAndSendMessageResponse
+// @Router /AI/chat/send-new-session [post]
 func CreateSessionAndSendMessage(c *gin.Context) {
 	req := new(CreateSessionAndSendMessageRequest)
 	res := new(CreateSessionAndSendMessageResponse)
@@ -84,6 +102,16 @@ func CreateSessionAndSendMessage(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
+// CreateStreamSessionAndSendMessage 创建新会话并流式发送消息（SSE）
+// @Summary 创建新会话并流式发送消息
+// @Description 创建新会话并以 SSE 流式返回 AI 回答，数据流先返回 sessionId 再返回回答内容
+// @Tags 会话
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce text/event-stream
+// @Param request body session.CreateSessionAndSendMessageRequest true "用户问题与模型类型"
+// @Success 200 {string} string "SSE 数据流"
+// @Router /AI/chat/send-stream-new-session [post]
 func CreateStreamSessionAndSendMessage(c *gin.Context) {
 	req := new(CreateSessionAndSendMessageRequest)
 	userName := c.GetString("userName") // From JWT middleware
@@ -118,6 +146,16 @@ func CreateStreamSessionAndSendMessage(c *gin.Context) {
 	}
 }
 
+// ChatSend 向已有会话发送消息（非流式）
+// @Summary 向已有会话发送消息
+// @Description 在指定会话中发送用户问题，返回 AI 回答
+// @Tags 会话
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body session.ChatSendRequest true "用户问题、模型类型与会话ID"
+// @Success 200 {object} session.ChatSendResponse
+// @Router /AI/chat/send [post]
 func ChatSend(c *gin.Context) {
 	req := new(ChatSendRequest)
 	res := new(ChatSendResponse)
@@ -139,6 +177,16 @@ func ChatSend(c *gin.Context) {
 	c.JSON(http.StatusOK, res)
 }
 
+// ChatStreamSend 向已有会话发送消息（SSE 流式）
+// @Summary 向已有会话流式发送消息
+// @Description 在指定会话中发送用户问题，以 SSE 流式返回 AI 回答
+// @Tags 会话
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce text/event-stream
+// @Param request body session.ChatSendRequest true "用户问题、模型类型与会话ID"
+// @Success 200 {string} string "SSE 数据流"
+// @Router /AI/chat/send-stream [post]
 func ChatStreamSend(c *gin.Context) {
 	req := new(ChatSendRequest)
 	userName := c.GetString("userName") // From JWT middleware
@@ -163,6 +211,16 @@ func ChatStreamSend(c *gin.Context) {
 
 }
 
+// ChatHistory 获取会话历史消息
+// @Summary 获取会话历史
+// @Description 获取指定会话的历史消息列表
+// @Tags 会话
+// @Security ApiKeyAuth
+// @Accept json
+// @Produce json
+// @Param request body session.ChatHistoryRequest true "会话ID"
+// @Success 200 {object} session.ChatHistoryResponse
+// @Router /AI/chat/history [post]
 func ChatHistory(c *gin.Context) {
 	req := new(ChatHistoryRequest)
 	res := new(ChatHistoryResponse)
