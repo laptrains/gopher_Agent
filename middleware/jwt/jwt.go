@@ -18,6 +18,7 @@ func Auth() gin.HandlerFunc {
 
 		var token string
 		authHeader := c.GetHeader("Authorization")
+		//HasPrefix作用是判断字符串是否以指定前缀开头：
 		if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
 			token = strings.TrimPrefix(authHeader, "Bearer ")
 		} else {
@@ -32,6 +33,7 @@ func Auth() gin.HandlerFunc {
 		}
 
 		log.Println("token is ", token)
+		// 解析 token是不是真的+过期了吗
 		userName, ok := myjwt.ParseToken(token)
 		if !ok {
 			c.JSON(http.StatusOK, res.CodeOf(code.CodeInvalidToken))
