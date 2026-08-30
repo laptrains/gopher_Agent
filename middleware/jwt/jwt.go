@@ -33,7 +33,7 @@ func Auth() gin.HandlerFunc {
 		}
 
 		log.Println("token is ", token)
-		// 解析 token是不是真的+过期了吗
+		// 解析 token是不是可信valid
 		userName, ok := myjwt.ParseToken(token)
 		if !ok {
 			c.JSON(http.StatusOK, res.CodeOf(code.CodeInvalidToken))

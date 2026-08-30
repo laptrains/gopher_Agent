@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/cloudwego/eino-ext/components/model/ollama"
 	"github.com/cloudwego/eino-ext/components/model/openai"
@@ -308,11 +309,14 @@ func (o *AliRAGModel) GetModelType() string { return "2" }
 // =================== MCP 实现 ===================
 
 // MCPModel MCP模型实现，集成MCP服务
+// 采用原生function calling：将MCP工具的schema绑定到LLM，由模型自主决策是否调用工具
 type MCPModel struct {
 	llm        model.ToolCallingChatModel
+	toolLLM    model.ToolCallingChatModel // 绑定MCP工具后的模型（惰性初始化）
 	mcpClient  *client.Client
 	username   string
 	mcpBaseURL string
+	mu         sync.Mutex
 }
 
 // NewMCPModel 创建MCP模型实例
@@ -341,31 +345,57 @@ func NewMCPModel(ctx context.Context, username string) (*MCPModel, error) {
 	}, nil
 }
 
-// getMCPClient 获取或创建MCP客户端
-func (m *MCPModel) getMCPClient(ctx context.Context) (*client.Client, error) {
-	if m.mcpClient == nil {
-		// 创建MCP客户端
-		httpTransport, err := transport.NewStreamableHTTP(m.mcpBaseURL)
-		if err != nil {
-			return nil, fmt.Errorf("create mcp transport failed: %v", err)
-		}
+// ensureMCPTools 惰性初始化MCP客户端并把远端工具绑定到LLM，只生效一次
+func (m *MCPModel) ensureMCPTools(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
-		m.mcpClient = client.NewClient(httpTransport)
-
-		// 初始化MCP客户端
-		initRequest := mcp.InitializeRequest{}
-		initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
-		initRequest.Params.ClientInfo = mcp.Implementation{
-			Name:    "MCP-Go AIHelper Client",
-			Version: "1.0.0",
-		}
-		initRequest.Params.Capabilities = mcp.ClientCapabilities{}
-
-		if _, err := m.mcpClient.Initialize(ctx, initRequest); err != nil {
-			return nil, fmt.Errorf("mcp client initialize failed: %v", err)
-		}
+	if m.toolLLM != nil {
+		return nil
 	}
-	return m.mcpClient, nil
+
+	// 创建并初始化MCP客户端
+	httpTransport, err := transport.NewStreamableHTTP(m.mcpBaseURL)
+	if err != nil {
+		return fmt.Errorf("create mcp transport failed: %v", err)
+	}
+	mcpClient := client.NewClient(httpTransport)
+
+	initRequest := mcp.InitializeRequest{}
+	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initRequest.Params.ClientInfo = mcp.Implementation{
+		Name:    "MCP-Go AIHelper Client",
+		Version: "1.0.0",
+	}
+	initRequest.Params.Capabilities = mcp.ClientCapabilities{}
+
+	if _, err := mcpClient.Initialize(ctx, initRequest); err != nil {
+		mcpClient.Close()
+		return fmt.Errorf("mcp client initialize failed: %v", err)
+	}
+
+	// 拉取远端工具列表并转换为eino工具描述
+	listResp, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		mcpClient.Close()
+		return fmt.Errorf("mcp list tools failed: %v", err)
+	}
+	toolInfos, err := convertMCPTools(listResp.Tools)
+	if err != nil {
+		mcpClient.Close()
+		return fmt.Errorf("convert mcp tools failed: %v", err)
+	}
+
+	// 绑定工具：WithTools返回新实例，不影响未绑定的llm
+	toolLLM, err := m.llm.WithTools(toolInfos)
+	if err != nil {
+		mcpClient.Close()
+		return fmt.Errorf("bind mcp tools failed: %v", err)
+	}
+
+	m.mcpClient = mcpClient
+	m.toolLLM = toolLLM
+	return nil
 }
 
 // GenerateResponse 生成响应，集成MCP工具
@@ -374,70 +404,36 @@ func (m *MCPModel) GenerateResponse(ctx context.Context, messages []*schema.Mess
 		return nil, fmt.Errorf("no messages provided")
 	}
 
-	// 获取最后一条消息
-	lastMessage := messages[len(messages)-1]
-	query := lastMessage.Content
-
-	// 第一次调用AI：告诉AI使用固定的JSON格式
-	firstPrompt := m.buildFirstPrompt(query)
-	firstMessages := make([]*schema.Message, len(messages))
-	copy(firstMessages, messages)
-	firstMessages[len(firstMessages)-1] = &schema.Message{
-		Role:    schema.User,
-		Content: firstPrompt,
+	llm := m.llm
+	if err := m.ensureMCPTools(ctx); err != nil {
+		// MCP服务不可用时降级为普通对话
+		log.Printf("MCP tools unavailable, fallback to plain chat: %v", err)
+	} else {
+		llm = m.toolLLM
 	}
 
-	// 调用LLM生成第一次响应
-	firstResp, err := m.llm.Generate(ctx, firstMessages)
+	// 第一次调用：模型根据绑定的工具schema自主决定是否调用工具
+	resp, err := llm.Generate(ctx, messages)
 	if err != nil {
-		return nil, fmt.Errorf("mcp first generate failed: %v", err)
+		return nil, fmt.Errorf("mcp generate failed: %v", err)
 	}
-	log.Println("first resp is ", firstResp)
-	// 解析AI响应
-	aiResult := firstResp.Content
-	toolCall, err := m.parseAIResponse(aiResult)
+
+	// 情况1：模型未请求工具调用，直接返回
+	if len(resp.ToolCalls) == 0 {
+		return resp, nil
+	}
+
+	// 情况2：执行工具调用，把结果以tool消息回传给模型生成最终回答
+	toolMsgs := m.executeToolCalls(ctx, resp.ToolCalls)
+	followUp := make([]*schema.Message, 0, len(messages)+1+len(toolMsgs))
+	followUp = append(followUp, messages...)
+	followUp = append(followUp, resp)
+	followUp = append(followUp, toolMsgs...)
+
+	finalResp, err := llm.Generate(ctx, followUp)
 	if err != nil {
-		log.Printf("Failed to parse AI response: %v", err)
-		return firstResp, nil
+		return nil, fmt.Errorf("mcp final generate failed: %v", err)
 	}
-
-	// 情况1：AI不调用工具，直接返回响应
-	if !toolCall.IsToolCall {
-		log.Println("toolCall IsToolCall is false ", firstResp)
-		return firstResp, nil
-	}
-	log.Println("toolCall IsToolCall is true ", firstResp)
-	// 情况2：AI要调用工具
-	// 获取MCP客户端
-	mcpClient, err := m.getMCPClient(ctx)
-	if err != nil {
-		log.Printf("MCP client error: %v", err)
-		return firstResp, nil
-	}
-
-	// 调用MCP工具
-	toolResult, err := m.callMCPTool(ctx, mcpClient, toolCall.ToolName, toolCall.Args)
-	if err != nil {
-		log.Printf("MCP tool call failed: %v", err)
-		return firstResp, nil
-	}
-
-	// 第二次调用AI：将工具结果告诉AI
-	secondPrompt := m.buildSecondPrompt(query, toolCall.ToolName, toolCall.Args, toolResult)
-	secondMessages := make([]*schema.Message, len(messages))
-	copy(secondMessages, messages)
-	secondMessages[len(secondMessages)-1] = &schema.Message{
-		Role:    schema.User,
-		Content: secondPrompt,
-	}
-
-	// 调用LLM生成最终响应
-	finalResp, err := m.llm.Generate(ctx, secondMessages)
-
-	if err != nil {
-		return nil, fmt.Errorf("mcp second generate failed: %v", err)
-	}
-	log.Println("最终响应为：", finalResp)
 	return finalResp, nil
 }
 
@@ -447,65 +443,38 @@ func (m *MCPModel) StreamResponse(ctx context.Context, messages []*schema.Messag
 		return "", fmt.Errorf("no messages provided")
 	}
 
-	// 获取最后一条消息
-	lastMessage := messages[len(messages)-1]
-	query := lastMessage.Content
-
-	// 第一次调用AI：告诉AI使用固定的JSON格式
-	firstPrompt := m.buildFirstPrompt(query)
-	firstMessages := make([]*schema.Message, len(messages))
-	copy(firstMessages, messages)
-	firstMessages[len(firstMessages)-1] = &schema.Message{
-		Role:    schema.User,
-		Content: firstPrompt,
+	llm := m.llm
+	if err := m.ensureMCPTools(ctx); err != nil {
+		// MCP服务不可用时降级为普通对话
+		log.Printf("MCP tools unavailable, fallback to plain chat: %v", err)
+	} else {
+		llm = m.toolLLM
 	}
 
-	// 第一次调用使用同步接口（非流式）
-	firstResp, err := m.llm.Generate(ctx, firstMessages)
+	// 第一次调用使用同步接口，判断模型是否请求工具调用
+	resp, err := llm.Generate(ctx, messages)
 	if err != nil {
-		return "", fmt.Errorf("mcp first generate failed: %v", err)
+		return "", fmt.Errorf("mcp generate failed: %v", err)
 	}
 
-	aiResult := firstResp.Content
-	toolCall, err := m.parseAIResponse(aiResult)
+	// 情况1：模型未请求工具调用，内容一次性回调给前端
+	if len(resp.ToolCalls) == 0 {
+		if len(resp.Content) > 0 {
+			cb(resp.Content)
+		}
+		return resp.Content, nil
+	}
+
+	// 情况2：执行工具调用，把结果回传给模型后流式生成最终回答
+	toolMsgs := m.executeToolCalls(ctx, resp.ToolCalls)
+	followUp := make([]*schema.Message, 0, len(messages)+1+len(toolMsgs))
+	followUp = append(followUp, messages...)
+	followUp = append(followUp, resp)
+	followUp = append(followUp, toolMsgs...)
+
+	stream, err := llm.Stream(ctx, followUp)
 	if err != nil {
-		log.Printf("Failed to parse AI response: %v", err)
-		return aiResult, nil
-	}
-
-	// 情况1：AI不调用工具，直接返回响应
-	if !toolCall.IsToolCall {
-		return aiResult, nil
-	}
-
-	// 情况2：AI要调用工具
-	// 获取MCP客户端
-	mcpClient, err := m.getMCPClient(ctx)
-	if err != nil {
-		log.Printf("MCP client error: %v", err)
-		return aiResult, nil
-	}
-
-	// 调用MCP工具
-	toolResult, err := m.callMCPTool(ctx, mcpClient, toolCall.ToolName, toolCall.Args)
-	if err != nil {
-		log.Printf("MCP tool call failed: %v", err)
-		return aiResult, nil
-	}
-
-	// 第二次调用AI：将工具结果告诉AI，使用流式接口
-	secondPrompt := m.buildSecondPrompt(query, toolCall.ToolName, toolCall.Args, toolResult)
-	secondMessages := make([]*schema.Message, len(messages))
-	copy(secondMessages, messages)
-	secondMessages[len(secondMessages)-1] = &schema.Message{
-		Role:    schema.User,
-		Content: secondPrompt,
-	}
-
-	// 调用LLM生成最终响应（流式）
-	stream, err := m.llm.Stream(ctx, secondMessages)
-	if err != nil {
-		return "", fmt.Errorf("mcp second stream failed: %v", err)
+		return "", fmt.Errorf("mcp stream failed: %v", err)
 	}
 	defer stream.Close()
 
@@ -517,7 +486,7 @@ func (m *MCPModel) StreamResponse(ctx context.Context, messages []*schema.Messag
 			break
 		}
 		if err != nil {
-			return "", fmt.Errorf("mcp second stream recv failed: %v", err)
+			return "", fmt.Errorf("mcp stream recv failed: %v", err)
 		}
 		if len(msg.Content) > 0 {
 			finalResp.WriteString(msg.Content)
@@ -528,84 +497,39 @@ func (m *MCPModel) StreamResponse(ctx context.Context, messages []*schema.Messag
 	return finalResp.String(), nil
 }
 
-// AIToolCall 表示AI工具调用请求
-type AIToolCall struct {
-	IsToolCall bool                   `json:"isToolCall"`
-	ToolName   string                 `json:"toolName"`
-	Args       map[string]interface{} `json:"args"`
-}
-
-// buildFirstPrompt 构建第一次调用的提示词
-func (m *MCPModel) buildFirstPrompt(query string) string {
-	return fmt.Sprintf(`你是一个智能助手，可以调用MCP工具来获取信息。
-
-可用工具:
-- get_weather: 获取指定城市的天气信息，参数: city（城市名称，支持中文和英文，如北京、Shanghai等）
-
-重要规则:
-1. 如果需要调用工具，必须严格返回以下JSON格式：
-{
-  "isToolCall": true,
-  "toolName": "工具名称",
-  "args": {"参数名": "参数值"}
-}
-2. 如果不需要调用工具，直接返回自然语言回答
-3. 请根据用户问题决定是否需要调用工具
-
-用户问题: %s
-
-请根据需要调用适当的工具，然后给出综合的回答。`, query)
-}
-
-// buildSecondPrompt 构建第二次调用的提示词
-func (m *MCPModel) buildSecondPrompt(query, toolName string, args map[string]interface{}, toolResult string) string {
-	return fmt.Sprintf(`你是一个智能助手，可以调用MCP工具来获取信息。
-
-工具执行结果:
-工具名称: %s
-工具参数: %v
-工具结果: %s
-
-用户问题: %s
-
-请根据工具结果和用户问题，给出最终的综合回答。`, toolName, args, toolResult, query)
-}
-
-// parseAIResponse 解析AI响应，检查是否包含工具调用
-func (m *MCPModel) parseAIResponse(response string) (*AIToolCall, error) {
-	// 尝试解析为JSON
-	var toolCall AIToolCall
-	if err := json.Unmarshal([]byte(response), &toolCall); err == nil {
-		return &toolCall, nil
-	}
-
-	// 如果不是JSON，检查是否包含工具调用关键词
-	if strings.Contains(response, "get_weather") {
-		// 尝试提取城市名称
-		city := m.extractCityFromResponse(response)
-		if city != "" {
-			return &AIToolCall{
-				IsToolCall: true,
-				ToolName:   "get_weather",
-				Args:       map[string]interface{}{"city": city},
-			}, nil
+// executeToolCalls 逐个执行模型请求的工具调用，返回对应的tool消息
+// 单个工具失败时把错误信息写入tool消息（让模型知情），不中断整个流程
+func (m *MCPModel) executeToolCalls(ctx context.Context, toolCalls []schema.ToolCall) []*schema.Message {
+	toolMsgs := make([]*schema.Message, 0, len(toolCalls))
+	for _, tc := range toolCalls {
+		var content string
+		var args map[string]interface{}
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+			log.Printf("MCP tool %s arguments parse failed: %v", tc.Function.Name, err)
+			content = fmt.Sprintf("tool arguments parse failed: %v", err)
+		} else if result, err := m.callMCPTool(ctx, tc.Function.Name, args); err != nil {
+			log.Printf("MCP tool %s call failed: %v", tc.Function.Name, err)
+			content = fmt.Sprintf("tool call failed: %v", err)
+		} else {
+			content = result
 		}
+		toolMsgs = append(toolMsgs, schema.ToolMessage(content, tc.ID))
 	}
-
-	// 不是工具调用
-	return &AIToolCall{IsToolCall: false}, nil
+	return toolMsgs
 }
 
-// callMCPTool 调用MCP工具
-func (m *MCPModel) callMCPTool(ctx context.Context, client *client.Client, toolName string, args map[string]interface{}) (string, error) {
-	callToolRequest := mcp.CallToolRequest{
+// callMCPTool 调用MCP工具并提取文本结果
+func (m *MCPModel) callMCPTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
+	if m.mcpClient == nil {
+		return "", fmt.Errorf("mcp client not initialized")
+	}
+
+	result, err := m.mcpClient.CallTool(ctx, mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
 			Name:      toolName,
 			Arguments: args,
 		},
-	}
-
-	result, err := client.CallTool(ctx, callToolRequest)
+	})
 	if err != nil {
 		return "", fmt.Errorf("mcp tool call failed: %v", err)
 	}
@@ -621,20 +545,87 @@ func (m *MCPModel) callMCPTool(ctx context.Context, client *client.Client, toolN
 	return text, nil
 }
 
-// extractCityFromResponse 从响应中提取城市名称
-// 直接从AI返回的JSON中提取城市，不预留城市列表
-func (m *MCPModel) extractCityFromResponse(response string) string {
-	// 尝试从JSON中提取城市
-	var toolCall AIToolCall
-	if err := json.Unmarshal([]byte(response), &toolCall); err == nil {
-		if args, ok := toolCall.Args["city"].(string); ok {
-			return args
+// convertMCPTools 将MCP工具schema转换为eino工具描述
+func convertMCPTools(tools []mcp.Tool) ([]*schema.ToolInfo, error) {
+	toolInfos := make([]*schema.ToolInfo, 0, len(tools))
+	for _, t := range tools {
+		params, err := convertMCPProperties(t.InputSchema.Properties, t.InputSchema.Required)
+		if err != nil {
+			return nil, fmt.Errorf("tool %s: %v", t.Name, err)
+		}
+		toolInfos = append(toolInfos, &schema.ToolInfo{
+			Name:        t.Name,
+			Desc:        t.Description,
+			ParamsOneOf: schema.NewParamsOneOfByParams(params),
+		})
+	}
+	return toolInfos, nil
+}
+
+// convertMCPProperties 转换JSON Schema properties为eino参数描述
+func convertMCPProperties(props map[string]any, required []string) (map[string]*schema.ParameterInfo, error) {
+	requiredSet := make(map[string]bool, len(required))
+	for _, r := range required {
+		requiredSet[r] = true
+	}
+	params := make(map[string]*schema.ParameterInfo, len(props))
+	for name, raw := range props {
+		prop, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("invalid schema of property %s", name)
+		}
+		info, err := convertMCPProperty(prop)
+		if err != nil {
+			return nil, fmt.Errorf("property %s: %v", name, err)
+		}
+		info.Required = requiredSet[name]
+		params[name] = info
+	}
+	return params, nil
+}
+
+// convertMCPProperty 递归转换单个JSON Schema属性（支持enum/数组元素/嵌套对象）
+func convertMCPProperty(prop map[string]any) (*schema.ParameterInfo, error) {
+	typ, _ := prop["type"].(string)
+	desc, _ := prop["description"].(string)
+	info := &schema.ParameterInfo{
+		Type: schema.DataType(typ),
+		Desc: desc,
+	}
+
+	if rawEnum, ok := prop["enum"].([]any); ok {
+		for _, e := range rawEnum {
+			if s, ok := e.(string); ok {
+				info.Enum = append(info.Enum, s)
+			}
 		}
 	}
 
-	// 如果JSON解析失败，尝试从文本中提取城市名称
-	// 这部分可以根据实际需要扩展，但不再预留固定城市列表
-	return ""
+	switch schema.DataType(typ) {
+	case schema.Array:
+		if rawItems, ok := prop["items"].(map[string]any); ok {
+			elem, err := convertMCPProperty(rawItems)
+			if err != nil {
+				return nil, err
+			}
+			info.ElemInfo = elem
+		}
+	case schema.Object:
+		rawProps, _ := prop["properties"].(map[string]any)
+		rawRequired, _ := prop["required"].([]any)
+		subRequired := make([]string, 0, len(rawRequired))
+		for _, r := range rawRequired {
+			if s, ok := r.(string); ok {
+				subRequired = append(subRequired, s)
+			}
+		}
+		sub, err := convertMCPProperties(rawProps, subRequired)
+		if err != nil {
+			return nil, err
+		}
+		info.SubParams = sub
+	}
+	return info, nil
 }
 
 // GetModelType 获取模型类型

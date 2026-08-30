@@ -10,13 +10,16 @@ import (
 
 	mcpclient "github.com/kaitai/gopherai-mcp/client"
 	mcpserver "github.com/kaitai/gopherai-mcp/server"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func main() {
 	// 定义命令行标志
 	mode := flag.String("mode", "", "运行模式: server 或 client")
 	httpAddr := flag.String("http-addr", ":8081", "HTTP服务器地址")
-	city := flag.String("city", "", "要查询天气的城市名称")
+	tool := flag.String("tool", "weather", "客户端要调用的工具: weather 或 stock")
+	city := flag.String("city", "", "要查询天气的城市名称（tool=weather 时必填）")
+	code := flag.String("code", "", "股票代码（tool=stock 时必填）")
 	flag.Parse()
 
 	if *mode == "" {
@@ -33,12 +36,6 @@ func main() {
 		}
 	} else if *mode == "client" {
 		// 运行客户端
-		if *city == "" {
-			fmt.Println("Error: 您必须指定城市名称使用--city")
-			flag.Usage()
-			os.Exit(1)
-		}
-
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
@@ -60,14 +57,33 @@ func main() {
 			log.Fatalf("健康检查失败: %v", err)
 		}
 
-		// 调用天气工具
-		result, err := mcpClient.CallWeatherTool(ctx, *city)
+		// 根据 --tool 调用对应工具
+		var result *mcp.CallToolResult
+		switch *tool {
+		case "stock":
+			if *code == "" {
+				fmt.Println("Error: tool=stock 时您必须指定股票代码使用--code")
+				flag.Usage()
+				os.Exit(1)
+			}
+			result, err = mcpClient.CallStockPriceTool(ctx, *code)
+		case "weather":
+			if *city == "" {
+				fmt.Println("Error: tool=weather 时您必须指定城市名称使用--city")
+				flag.Usage()
+				os.Exit(1)
+			}
+			result, err = mcpClient.CallWeatherTool(ctx, *city)
+		default:
+			fmt.Printf("Error: 未知工具 %q，仅支持 weather 或 stock\n", *tool)
+			os.Exit(1)
+		}
 		if err != nil {
 			log.Fatalf("调用工具失败: %v", err)
 		}
 
-		// 显示天气结果
-		fmt.Println("\n天气查询结果:")
+		// 显示查询结果
+		fmt.Println("\n查询结果:")
 		fmt.Println(mcpClient.GetToolResultText(result))
 
 		fmt.Println("\n客户端初始化成功。正在关闭...")

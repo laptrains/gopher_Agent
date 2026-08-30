@@ -109,6 +109,27 @@ func (m *MCPClient) CallWeatherTool(ctx context.Context, city string) (*mcp.Call
 	return result, nil
 }
 
+// CallStockPriceTool 调用get_stock_price工具
+func (m *MCPClient) CallStockPriceTool(ctx context.Context, code string) (*mcp.CallToolResult, error) {
+	fmt.Printf("正在查询股票 %s 的行情...\n", code)
+
+	callToolRequest := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "get_stock_price",
+			Arguments: map[string]any{
+				"code": code,
+			},
+		},
+	}
+
+	result, err := m.c.CallTool(ctx, callToolRequest)
+	if err != nil {
+		return nil, fmt.Errorf("调用工具失败: %w", err)
+	}
+
+	return result, nil
+}
+
 // GetToolResultText 获取工具结果中的文本内容
 func (m *MCPClient) GetToolResultText(result *mcp.CallToolResult) string {
 	var text string

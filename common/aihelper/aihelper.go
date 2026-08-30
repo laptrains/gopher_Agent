@@ -5,6 +5,7 @@ import (
 	"GopherAI/model"
 	"GopherAI/utils"
 	"context"
+	"log"
 	"sync"
 )
 
@@ -35,21 +36,29 @@ func NewAIHelper(model_ AIModel, SessionID string) *AIHelper {
 
 // addMessage 添加消息到内存中并调用自定义存储函数
 func (a *AIHelper) AddMessage(Content string, UserName string, IsUser bool, Save bool) {
+
 	userMsg := model.Message{
 		SessionID: a.SessionID,
 		Content:   Content,
 		UserName:  UserName,
 		IsUser:    IsUser,
 	}
+	a.mu.Lock()
 	a.messages = append(a.messages, &userMsg)
+	a.mu.Unlock()
 	if Save {
-		a.saveFunc(&userMsg)
+		if _, err := a.saveFunc(&userMsg); err != nil {
+			log.Println("异步推送到消息队列中报错", err)
+			return
+		}
 	}
 }
 
 // SaveMessage 保存消息到数据库（通过回调函数避免循环依赖）
 // 通过传入func，自己调用外部的保存函数，即可支持同步异步等多种策略
 func (a *AIHelper) SetSaveFunc(saveFunc func(*model.Message) (*model.Message, error)) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	a.saveFunc = saveFunc
 }
 

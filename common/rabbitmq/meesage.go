@@ -38,7 +38,7 @@ func MQMessage(msg *amqp.Delivery) error {
 		UserName:  param.UserName,
 		IsUser:    param.IsUser,
 	}
-	//消费者异步插入到数据库中
-	message.CreateMessage(newMsg)
-	return nil
+	//消费者异步插入到数据库中，返回错误以便上层决定是否重试
+	_, err = message.CreateMessage(newMsg)
+	return err
 }

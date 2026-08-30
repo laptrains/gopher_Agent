@@ -10,6 +10,10 @@ import (
 	"GopherAI/router"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	_ "GopherAI/docs"
 )
@@ -69,13 +73,37 @@ func main() {
 		return
 	}
 	//初始化AIHelperManager
-	readDataFromDB()
+	if err := readDataFromDB(); err != nil {
+		log.Printf("readDataFromDB error: %v", err)
+	}
 
 	//初始化redis
 	redis.Init()
 	log.Println("redis init success  ")
-	rabbitmq.InitRabbitMQ()
+
+	// 初始化 RabbitMQ，失败时重试，仍失败则退出
+	var mqErr error
+	for i := 1; i <= 3; i++ {
+		if mqErr = rabbitmq.InitRabbitMQ(); mqErr == nil {
+			break
+		}
+		log.Printf("rabbitmq init failed (attempt %d/3): %v", i, mqErr)
+		time.Sleep(2 * time.Second)
+	}
+	if mqErr != nil {
+		log.Fatalf("rabbitmq init failed after retries: %v", mqErr)
+	}
 	log.Println("rabbitmq init success  ")
+
+	// 优雅关闭：监听退出信号，释放 RabbitMQ 连接后再退出
+	go func() {
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		<-quit
+		log.Println("received shutdown signal, closing rabbitmq...")
+		rabbitmq.DestroyRabbitMQ()
+		os.Exit(0)
+	}()
 
 	err := StartServer(host, port) // 启动 HTTP 服务
 	if err != nil {
